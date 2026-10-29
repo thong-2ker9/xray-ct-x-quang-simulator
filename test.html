@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mô phỏng 3D — Máy X-Quang & Máy CT Scanner</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; background: #080c16; color: #e0e6f0; }
+  #canvas-container { position: fixed; inset: 0; }
+  #ui { position: fixed; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 10px; z-index: 10; width: 300px; max-height: calc(100vh - 260px); overflow-y: auto; }
+  .panel { background: rgba(14, 20, 34, 0.88); backdrop-filter: blur(12px); border: 1px solid rgba(80, 130, 200, 0.3); border-radius: 12px; padding: 12px 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .panel h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: 1.5px; color: #5b9dff; margin-bottom: 10px; font-weight: 700; }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  button { background: linear-gradient(135deg, #1e2d4a, #2a3d5f); border: 1px solid rgba(100, 150, 220, 0.3); color: #cdd9ee; padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 12.5px; font-family: inherit; transition: all 0.2s; flex: 1; min-width: fit-content; }
+  button:hover { background: linear-gradient(135deg, #2a3d5f, #3a5080); border-color: rgba(100, 150, 220, 0.6); }
+  button.active { background: linear-gradient(135deg, #2563eb, #3b82f6); border-color: #60a5fa; color: #fff; box-shadow: 0 0 18px rgba(59, 130, 246, 0.6); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  #steps { display: flex; flex-direction: column; gap: 4px; }
+  .step-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; font-size: 12px; cursor: pointer; transition: all 0.2s; border-left: 3px solid transparent; }
+  .step-item:hover { background: rgba(80, 130, 200, 0.12); }
+  .step-item.active { background: rgba(59, 130, 246, 0.18); border-left-color: #3b82f6; }
+  .step-num { width: 19px; height: 19px; border-radius: 50%; background: #1e2d4a; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 700; flex-shrink: 0; }
+  .step-item.active .step-num { background: #3b82f6; color: #fff; }
+  .step-item.done .step-num { background: #16a34a; }
+  #footer { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(8, 12, 22, 0.96); backdrop-filter: blur(12px); border-top: 1px solid rgba(80, 130, 200, 0.3); padding: 12px 24px 14px; z-index: 10; max-height: 30vh; overflow-y: auto; }
+  #footer h2 { font-size: 14.5px; color: #5b9dff; margin-bottom: 6px; }
+  #footer p { font-size: 12.8px; line-height: 1.55; color: #a8b8d2; }
+  #footer .note { font-size: 11px; color: #5a6a85; font-style: italic; margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(80, 130, 200, 0.15); }
+  .made-by { text-align: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(80, 130, 200, 0.25); font-size: 13px; color: #5b9dff; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; text-shadow: 0 0 12px rgba(91, 157, 255, 0.55); }
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+
+<div id="ui">
+  <div class="panel">
+    <h3>Thiết bị</h3>
+    <div class="btn-row">
+      <button id="btn-xray" class="active">Máy X-Quang</button>
+      <button id="btn-ct">Máy CT</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Quy trình 8 bước</h3>
+    <div id="steps"></div>
+    <div class="btn-row" style="margin-top:10px">
+      <button id="btn-prev">◀ Trước</button>
+      <button id="btn-play">▶ Tự động</button>
+      <button id="btn-next">Sau ▶</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h3>Hiển thị</h3>
+    <div class="btn-row">
+      <button id="btn-internal">Xem cấu tạo trong</button>
+      <button id="btn-reset">Reset camera</button>
+    </div>
+  </div>
+</div>
+
+<div id="footer">
+  <h2 id="footer-title">Nguyên lý hoạt động</h2>
+  <p id="footer-text"></p>
+  <div class="note">💡 Kéo chuột trái để xoay • Lăn chuột để zoom • Chuột phải để dịch chuyển. Mô hình mang tính giáo dục, không thay thế thiết bị y tế thật.</div>
+  <div class="made-by">Made by Anh Thông</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ============================================================
+// 1. THIẾT LẬP CẢNH
+// ============================================================
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x080c16);
+scene.fog = new THREE.FogExp2(0x080c16, 0.018);
+
+const camera = new THREE.PerspectiveCamera(48, innerWidth/innerHeight, 0.1, 200);
+camera.position.set(0, 7, 17);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 1.6, 0);
+controls.maxPolarAngle = Math.PI/2 - 0.03;
+controls.minDistance = 3;
+controls.maxDistance = 40;
+
+// ============================================================
+// 2. ÁNH SÁNG & MẶT ĐẤT
+// ============================================================
+scene.add(new THREE.HemisphereLight(0x9ac0ff, 0x050810, 0.55));
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+dirLight.position.set(8, 16, 10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.left = -14;
+dirLight.shadow.camera.right = 14;
+dirLight.shadow.camera.top = 14;
+dirLight.shadow.camera.bottom = -14;
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 40;
+dirLight.shadow.bias = -0.0005;
+scene.add(dirLight);
+
+const fillLight = new THREE.DirectionalLight(0x5588ff, 0.45);
+fillLight.position.set(-10, 8, -8);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0x4466aa, 0.6);
+rimLight.position.set(0, 4, -12);
+scene.add(rimLight);
+
+const groundGeo = new THREE.CircleGeometry(20, 64);
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x10182a, roughness: 0.9, metalness: 0.15 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(40, 40, 0x1f3a5f, 0x121e30);
+grid.position.y = 0.01;
+grid.material.transparent = true;
+grid.material.opacity = 0.5;
+scene.add(grid);
+
+// ============================================================
+// 3. VẬT LIỆU
+// ============================================================
+const matMetal      = new THREE.MeshStandardMaterial({ color: 0xc8d0dc, metalness: 0.85, roughness: 0.25 });
+const matDarkMetal  = new THREE.MeshStandardMaterial({ color: 0x3a4150, metalness: 0.7, roughness: 0.45 });
+const matWhite      = new THREE.MeshStandardMaterial({ color: 0xeef2f8, metalness: 0.15, roughness: 0.55 });
+const matRubber     = new THREE.MeshStandardMaterial({ color: 0x1a1e26, metalness: 0.2, roughness: 0.85 });
+const matGlassTube  = new THREE.MeshPhysicalMaterial({ color: 0x9fdcff, transparent: true, opacity: 0.3, roughness: 0.05, metalness: 0, side: THREE.DoubleSide });
+const matTungsten   = new THREE.MeshStandardMaterial({ color: 0xc9a86a, metalness: 0.95, roughness: 0.25, emissive: 0x000000 });
+const matCathode    = new THREE.MeshStandardMaterial({ color: 0x8a3040, metalness: 0.6, roughness: 0.5, emissive: 0x000000 });
+
+const xrayCasingMat = new THREE.MeshStandardMaterial({ color: 0xe4eaf4, metalness: 0.45, roughness: 0.35, transparent: true, opacity: 1 });
+const ctCasingMat   = new THREE.MeshStandardMaterial({ color: 0xf0f3fa, metalness: 0.35, roughness: 0.4, transparent: true, opacity: 1 });
+
+// ============================================================
+// 4. CƠ THỂ NGƯỜI
+// ============================================================
+function createHuman() {
+  const root = new THREE.Group();
+
+  const skinMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffc9a4, transparent: true, opacity: 0.42,
+    roughness: 0.65, metalness: 0, clearcoat: 0.3
+  });
+  const boneMat = new THREE.MeshStandardMaterial({ color: 0xf6f4e8, roughness: 0.55, metalness: 0.05, emissive: 0x0a0a05 });
+  const organMat = new THREE.MeshStandardMaterial({ color: 0xcc5566, transparent: true, opacity: 0.55, roughness: 0.7 });
+  const lungMat  = new THREE.MeshStandardMaterial({ color: 0xffaacc, transparent: true, opacity: 0.32, roughness: 0.8 });
+  const brainMat = new THREE.MeshStandardMaterial({ color: 0xffb8c8, transparent: true, opacity: 0.55, roughness: 0.7 });
+
+  const bones = new THREE.Group();
+
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.155, 20, 16), boneMat);
+  skull.position.y = 1.72;
+  skull.scale.set(1, 1.12, 1.08);
+  bones.add(skull);
+
+  const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 0.78, 10), boneMat);
+  spine.position.y = 1.16;
+  bones.add(spine);
+
+  for (let i = 0; i < 4; i++) {
+    const v = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.028, 10), boneMat);
+    v.position.y = 1.5 + i * 0.035;
+    bones.add(v);
+  }
+
+  for (let i = 0; i < 7; i++) {
+    const r = 0.21 - i * 0.012;
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(r, 0.011, 6, 22), boneMat);
+    rib.rotation.x = Math.PI / 2;
+    rib.position.y = 1.44 - i * 0.062;
+    rib.scale.set(1.15, 1, 0.86);
+    bones.add(rib);
+  }
+
+  [-1, 1].forEach(s => {
+    const clav = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.22, 8), boneMat);
+    clav.position.set(s * 0.12, 1.5, 0.04);
+    clav.rotation.z = s * Math.PI / 2.4;
+    bones.add(clav);
+  });
+
+  const pelvis = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.042, 8, 20), boneMat);
+  pelvis.rotation.x = Math.PI / 2;
+  pelvis.position.y = 0.82;
+  pelvis.scale.set(1.1, 1, 0.85);
+  bones.add(pelvis);
+
+  [-1, 1].forEach(s => {
+    const humerus = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.024, 0.32, 8), boneMat);
+    humerus.position.set(s * 0.29, 1.32, 0);
+    humerus.rotation.z = s * 0.08;
+    bones.add(humerus);
+    const radius = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.017, 0.28, 8), boneMat);
+    radius.position.set(s * 0.33, 1.0, 0);
+    radius.rotation.z = s * 0.06;
+    bones.add(radius);
+    for (let i = 0; i < 3; i++) {
+      const finger = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.09, 6), boneMat);
+      finger.position.set(s * (0.34 + i * 0.015), 0.82, 0);
+      bones.add(finger);
+    }
+  });
+
+  [-1, 1].forEach(s => {
+    const femur = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.03, 0.42, 10), boneMat);
+    femur.position.set(s * 0.085, 0.56, 0);
+    bones.add(femur);
+    const tibia = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.024, 0.4, 10), boneMat);
+    tibia.position.set(s * 0.085, 0.13, 0);
+    bones.add(tibia);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.2), boneMat);
+    foot.position.set(s * 0.085, -0.12, 0.06);
+    bones.add(foot);
+  });
+
+  root.add(bones);
+
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.215, 0.48, 10, 18), skinMat);
+  torso.position.y = 1.2;
+  torso.scale.set(1, 1, 0.78);
+  torso.castShadow = true;
+  root.add(torso);
+
+  const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.195, 0.14, 8, 16), skinMat);
+  hips.position.y = 0.83;
+  hips.scale.set(1.12, 1, 0.85);
+  root.add(hips);
+
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.075, 0.11, 12), skinMat);
+  neck.position.y = 1.56;
+  root.add(neck);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.165, 22, 18), skinMat);
+  head.position.y = 1.72;
+  head.scale.set(1, 1.13, 1.08);
+  head.castShadow = true;
+  root.add(head);
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.06, 8), skinMat);
+  nose.position.set(0, 1.71, 0.16);
+  nose.rotation.x = Math.PI / 2;
+  root.add(nose);
+
+  [-1, 1].forEach(s => {
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.26, 8, 14), skinMat);
+    upper.position.set(s * 0.28, 1.32, 0);
+    upper.rotation.z = s * 0.09;
+    upper.castShadow = true;
+    root.add(upper);
+    const lower = new THREE.Mesh(new THREE.CapsuleGeometry(0.047, 0.24, 8, 14), skinMat);
+    lower.position.set(s * 0.33, 1.0, 0);
+    root.add(lower);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.058, 12, 10), skinMat);
+    hand.position.set(s * 0.34, 0.79, 0);
+    hand.scale.set(1, 1.35, 0.65);
+    root.add(hand);
+  });
+
+  [-1, 1].forEach(s => {
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.078, 0.34, 8, 14), skinMat);
+    thigh.position.set(s * 0.085, 0.56, 0);
+    thigh.castShadow = true;
+    root.add(thigh);
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.062, 0.34, 8, 14), skinMat);
+    shin.position.set(s * 0.085, 0.13, 0);
+    root.add(shin);
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.07, 0.21), skinMat);
+    foot.position.set(s * 0.085, -0.13, 0.055);
+    root.add(foot);
+  });
+
+  const heart = new THREE.Mesh(new THREE.SphereGeometry(0.075, 14, 12), organMat);
+  heart.position.set(-0.045, 1.28, 0.055);
+  heart.scale.set(1, 1.15, 0.85);
+  root.add(heart);
+
+  const lungs = new THREE.Mesh(new THREE.SphereGeometry(0.13, 14, 12), lungMat);
+  lungs.position.set(0, 1.3, 0.02);
+  lungs.scale.set(1.25, 1.2, 0.8);
+  root.add(lungs);
+
+  const brain = new THREE.Mesh(new THREE.SphereGeometry(0.115, 16, 12), brainMat);
+  brain.position.y = 1.73;
+  brain.scale.set(1, 1.1, 1.05);
+  root.add(brain);
+
+  const liver = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), organMat);
+  liver.position.set(0.07, 1.06, 0.03);
+  liver.scale.set(1.3, 0.8, 0.9);
+  root.add(liver);
+
+  return { group: root, bones };
+}
+
+// ============================================================
+// 5. MÁY X-QUANG
+// ============================================================
+function createXrayMachine() {
+  const g = new THREE.Group();
+  g.position.set(-4.5, 0, 0);
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.35, 0.65), matDarkMetal);
+  base.position.set(-1.5, 0.22, 0);
+  base.castShadow = true; base.receiveShadow = true;
+  g.add(base);
+
+  const wheelGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.06, 14);
+  [[-1.9, -0.22], [-1.9, 0.22], [-1.1, -0.22], [-1.1, 0.22]].forEach(([x, z]) => {
+    const w = new THREE.Mesh(wheelGeo, matRubber);
+    w.rotation.x = Math.PI / 2;
+    w.position.set(x, 0.09, z);
+    w.castShadow = true;
+    g.add(w);
+  });
+
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 2.7, 18), matMetal);
+  column.position.set(-1.5, 1.75, 0);
+  column.castShadow = true;
+  g.add(column);
+
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.12, 0.12), matMetal);
+  arm.position.set(-0.55, 3.05, 0);
+  arm.castShadow = true;
+  g.add(arm);
+
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.62, 0.58), xrayCasingMat);
+  housing.position.set(0.5, 2.75, 0);
+  housing.castShadow = true;
+  g.add(housing);
+
+  const housingEdge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.70, 0.64, 0.60),
+    new THREE.MeshBasicMaterial({ color: 0x5b9dff, wireframe: true, transparent: true, opacity: 0.15 })
+  );
+  housingEdge.position.copy(housing.position);
+  g.add(housingEdge);
+
+  const glassTube = new THREE.Mesh(new THREE.CylinderGeometry(0.135, 0.135, 0.42, 18), matGlassTube);
+  glassTube.position.set(0.5, 2.73, 0);
+  g.add(glassTube);
+
+  const cathode = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.048, 0.06, 12), matCathode);
+  cathode.position.set(0.5, 2.90, 0);
+  g.add(cathode);
+
+  const filament = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.006, 6, 12), new THREE.MeshStandardMaterial({ color: 0x882222, emissive: 0x000000 }));
+  filament.rotation.x = Math.PI / 2;
+  filament.position.set(0.5, 2.88, 0);
+  g.add(filament);
+
+  const anode = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.022, 20), matTungsten);
+  anode.position.set(0.5, 2.55, 0);
+  anode.rotation.z = 0.28;
+  anode.castShadow = true;
+  g.add(anode);
+
+  const collimator = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.17, 0.10, 0.18, 18, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0x2a3040, metalness: 0.8, roughness: 0.35, side: THREE.DoubleSide })
+  );
+  collimator.position.set(0.5, 2.35, 0);
+  g.add(collimator);
+
+  const eBeamMat = new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0, depthWrite: false });
+  const eBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.30, 8), eBeamMat);
+  eBeam.position.set(0.5, 2.725, 0);
+  g.add(eBeam);
+
+  const ePartCount = 40;
+  const ePartPos = new Float32Array(ePartCount * 3);
+  for (let i = 0; i < ePartCount; i++) {
+    ePartPos[i*3+0] = 0.5 + (Math.random()-0.5) * 0.03;
+    ePartPos[i*3+1] = 2.88 - Math.random() * 0.32;
+    ePartPos[i*3+2] = (Math.random()-0.5) * 0.03;
+  }
+  const ePartGeo = new THREE.BufferGeometry();
+  ePartGeo.setAttribute('position', new THREE.BufferAttribute(ePartPos, 3));
+  const ePartMat = new THREE.PointsMaterial({ color: 0xffee66, size: 0.028, transparent: true, opacity: 0, depthWrite: false });
+  const eParticles = new THREE.Points(ePartGeo, ePartMat);
+  g.add(eParticles);
+
+  const xrayMat = new THREE.MeshBasicMaterial({ color: 0x66ccff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const xrayCone = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.5, 28, 1, true), xrayMat);
+  xrayCone.position.set(0.5, 1.8, 0);
+  g.add(xrayCone);
+
+  const xrayCoreMat = new THREE.MeshBasicMaterial({ color: 0xaae8ff, transparent: true, opacity: 0, depthWrite: false });
+  const xrayCore = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.35, 1.5, 16), xrayCoreMat);
+  xrayCore.position.set(0.5, 1.8, 0);
+  g.add(xrayCore);
+
+  const xrayLight = new THREE.PointLight(0x66ccff, 0, 5);
+  xrayLight.position.set(0.5, 1.9, 0);
+  g.add(xrayLight);
+
+  const thruMat = new THREE.MeshBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0, depthWrite: false });
+  const beamThru = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.02, 24), thruMat);
+  beamThru.position.set(0.5, 0.83, 0);
+  g.add(beamThru);
+
+  const tableTop = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.09, 0.72), matWhite);
+  tableTop.position.set(0.5, 0.9, 0);
+  tableTop.castShadow = true; tableTop.receiveShadow = true;
+  g.add(tableTop);
+
+  const tableEdge = new THREE.Mesh(
+    new THREE.BoxGeometry(2.94, 0.10, 0.76),
+    new THREE.MeshStandardMaterial({ color: 0x88a0c8, metalness: 0.6, roughness: 0.4 })
+  );
+  tableEdge.position.set(0.5, 0.895, 0);
+  g.add(tableEdge);
+
+  const tableLeg = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.86, 0.5), matMetal);
+  tableLeg.position.set(0.5, 0.44, 0);
+  tableLeg.castShadow = true;
+  g.add(tableLeg);
+
+  const tableFoot = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.7), matDarkMetal);
+  tableFoot.position.set(0.5, 0.04, 0);
+  g.add(tableFoot);
+
+  const human = createHuman();
+  const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI/2);
+  const qy = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI/2);
+  human.group.quaternion.copy(qy).multiply(qx);
+  human.group.position.set(-0.38, 1.06, 0);
+  g.add(human.group);
+
+  const filmTex = makeXrayFilmTexture();
+  const filmMat = new THREE.MeshBasicMaterial({ map: filmTex, transparent: true, side: THREE.DoubleSide, opacity: 1 });
+  const film = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.5), filmMat);
+  film.position.set(2.4, 2.4, 1.6);
+  film.scale.setScalar(0.001);
+  g.add(film);
+
+  const filmFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(1.22, 1.57, 0.015),
+    new THREE.MeshStandardMaterial({ color: 0x2a3a55, metalness: 0.6, roughness: 0.4 })
+  );
+  filmFrame.position.copy(film.position);
+  filmFrame.position.z -= 0.01;
+  filmFrame.scale.setScalar(0.001);
+  g.add(filmFrame);
+
+  return {
+    group: g,
+    housing, housingEdge, cathode, filament, anode,
+    eBeam, ePartMat, eParticles, ePartPos,
+    xrayCone, xrayCore, xrayLight, beamThru,
+    film, filmFrame,
+    tableTop, human
+  };
+}
+
+// ============================================================
+// 6. MÁY CT SCANNER — ĐÃ VIẾT LẠI HOÀN TOÀN
+// ============================================================
+function createCTMachine() {
+  const g = new THREE.Group();
+  g.position.set(4.5, 0, 0);
+
+  // ---- Đế cố định ----
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.42, 1.5), matDarkMetal);
+  base.position.set(0, 0.21, 0);
+  base.castShadow = true; base.receiveShadow = true;
+  g.add(base);
+
+  const basePlate = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.05, 1.6), matMetal);
+  basePlate.position.set(0, 0.44, 0);
+  g.add(basePlate);
+
+  // ---- Gantry (vòng donut) ----
+  const gantry = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.40, 32, 64), ctCasingMat);
+  gantry.position.set(0, 1.42, 0);
+  gantry.castShadow = true;
+  g.add(gantry);
+
+  const gantryRing = new THREE.Mesh(
+    new THREE.TorusGeometry(1.30, 0.025, 12, 64),
+    new THREE.MeshStandardMaterial({ color: 0x3b82f6, metalness: 0.8, roughness: 0.3, emissive: 0x0a2a5f })
+  );
+  gantryRing.position.set(0, 1.42, 0);
+  g.add(gantryRing);
+
+  const gantryRing2 = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.022, 12, 48),
+    new THREE.MeshStandardMaterial({ color: 0x5b9dff, metalness: 0.8, roughness: 0.3 })
+  );
+  gantryRing2.position.set(0, 1.42, 0);
+  g.add(gantryRing2);
+
+  const ledMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), ledMat);
+  led.position.set(0, 1.42 + 1.36, 0.15);
+  g.add(led);
+
+  // ---- Rotor bên trong gantry ----
+  const rotor = new THREE.Group();
+  rotor.position.set(0, 1.42, 0);
+  g.add(rotor);
+
+  const tubeHousing = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.30, 0.48), matDarkMetal);
+  tubeHousing.position.set(0.72, 0, 0);
+  tubeHousing.castShadow = true;
+  rotor.add(tubeHousing);
+
+  const tubeGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.28, 14), matGlassTube);
+  tubeGlass.position.set(0.72, 0, 0);
+  tubeGlass.rotation.z = Math.PI / 2;
+  rotor.add(tubeGlass);
+
+  const ctCathode = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.04, 10), matCathode);
+  ctCathode.position.set(0.60, 0, 0);
+  ctCathode.rotation.z = Math.PI / 2;
+  rotor.add(ctCathode);
+
+  const ctAnode = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.015, 14), matTungsten);
+  ctAnode.position.set(0.83, 0, 0);
+  ctAnode.rotation.z = Math.PI / 2 + 0.25;
+  rotor.add(ctAnode);
+
+  const detector = new THREE.Group();
+  for (let i = 0; i < 20; i++) {
+    const angle = -0.55 + i * (1.1 / 19);
+    const d = new THREE.Mesh(
+      new THREE.BoxGeometry(0.055, 0.22, 0.11),
+      new THREE.MeshStandardMaterial({ color: 0x1e2a3e, metalness: 0.7, roughness: 0.35, emissive: 0x000000 })
+    );
+    d.position.set(-0.78 * Math.cos(angle), -0.78 * Math.sin(angle), 0);
+    d.rotation.z = angle;
+    detector.add(d);
+  }
+  rotor.add(detector);
+
+  const ctBeamMat = new THREE.MeshBasicMaterial({ color: 0x66ddff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const ctBeam = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.35, 0.02), ctBeamMat);
+  rotor.add(ctBeam);
+
+  const ctBeamCoreMat = new THREE.MeshBasicMaterial({ color: 0xaaeeff, transparent: true, opacity: 0, depthWrite: false });
+  const ctBeamCore = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.06, 0.02), ctBeamCoreMat);
+  rotor.add(ctBeamCore);
+
+  const ctLight = new THREE.PointLight(0x66ddff, 0, 3.5);
+  rotor.add(ctLight);
+
+  const sliceRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.32, 0.018, 10, 40),
+    new THREE.MeshBasicMaterial({ color: 0x66ddff, transparent: true, opacity: 0, depthWrite: false })
+  );
+  sliceRing.position.set(0, 1.42, 0);
+  sliceRing.rotation.x = Math.PI / 2;
+  g.add(sliceRing);
+
+  // ============================================
+  // PHẦN ĐÃ SỬA: BÀN TRƯỢT + BỆNH NHÂN
+  // ============================================
+
+  // ---- Trụ đỡ cố định (single column, giống máy CT thật) ----
+  const supportColumn = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.9, 0.55), matMetal);
+  supportColumn.position.set(0, 0.5, 0);
+  supportColumn.castShadow = true;
+  g.add(supportColumn);
+
+  // ---- Ray trượt cố định (dài, luôn nằm dưới mặt bàn) ----
+  const rail = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.08, 10.0),
+    matDarkMetal
+  );
+  rail.position.set(0, 0.98, 0);
+  rail.receiveShadow = true;
+  g.add(rail);
+
+  // ---- Nhóm BÀN TRƯỢT (di chuyển được) ----
+  const slideGroup = new THREE.Group();
+  slideGroup.position.z = 3.5;  // Vị trí ban đầu: bàn ở ngoài, sẵn sàng tiến vào
+  g.add(slideGroup);
+
+  // Mặt bàn dài để luôn phủ qua gantry dù trượt xa
+  const tableTop = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.08, 8.5), matWhite);
+  tableTop.position.set(0, 1.1, 0);
+  tableTop.castShadow = true; tableTop.receiveShadow = true;
+  slideGroup.add(tableTop);
+
+  const tableEdge = new THREE.Mesh(
+    new THREE.BoxGeometry(0.76, 0.09, 8.54),
+    new THREE.MeshStandardMaterial({ color: 0x88a0c8, metalness: 0.6, roughness: 0.4 })
+  );
+  tableEdge.position.set(0, 1.095, 0);
+  slideGroup.add(tableEdge);
+
+  // ---- Bệnh nhân nằm trên bàn trượt (SẼ ĐI QUA GANTRY CÙNG BÀN) ----
+  const human = createHuman();
+  const qx = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI/2);
+  const qy180 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+  human.group.quaternion.copy(qy180).multiply(qx);
+  // Căn giữa cơ thể vào tâm mặt bàn (bù trừ vì model có gốc ở chân)
+  human.group.position.set(0, 1.24, -0.87);
+  slideGroup.add(human.group);
+
+  // ---- Tấm film CT ----
+  const filmTex = makeCTFilmTexture();
+  const filmMat = new THREE.MeshBasicMaterial({ map: filmTex, transparent: true, side: THREE.DoubleSide, opacity: 1 });
+  const film = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.15), filmMat);
+  film.position.set(-2.0, 2.5, 1.5);
+  film.scale.setScalar(0.001);
+  g.add(film);
+
+  const filmFrame = new THREE.Mesh(
+    new THREE.BoxGeometry(1.22, 1.22, 0.015),
+    new THREE.MeshStandardMaterial({ color: 0x2a3a55, metalness: 0.6, roughness: 0.4 })
+  );
+  filmFrame.position.copy(film.position);
+  filmFrame.position.z -= 0.01;
+  filmFrame.scale.setScalar(0.001);
+  g.add(filmFrame);
+
+  return {
+    group: g,
+    gantry, gantryRing, gantryRing2, led,
+    rotor, tubeHousing, ctCathode, ctAnode, detector,
+    ctBeam, ctBeamCore, ctLight, sliceRing,
+    slideGroup, tableTop, human,
+    film, filmFrame
+  };
+}
+
+// ============================================================
+// 7. TEXTURE FILM
+// ============================================================
+function makeXrayFilmTexture() {
+  const c = document.createElement('canvas');
+  c.width = 384; c.height = 500;
+  const ctx = c.getContext('2d');
+
+  ctx.fillStyle = '#0a0d0a';
+  ctx.fillRect(0, 0, 384, 500);
+
+  ctx.strokeStyle = '#1a2a1a';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(6, 6, 372, 488);
+
+  const grad = ctx.createRadialGradient(192, 250, 40, 192, 250, 230);
+  grad.addColorStop(0, 'rgba(190,200,210,0.75)');
+  grad.addColorStop(0.65, 'rgba(60,70,80,0.4)');
+  grad.addColorStop(1, 'rgba(10,12,10,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 384, 500);
+
+  ctx.fillStyle = 'rgba(15,18,20,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(128, 235, 58, 118, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(256, 235, 58, 118, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  const spineGrad = ctx.createLinearGradient(180, 0, 204, 0);
+  spineGrad.addColorStop(0, 'rgba(230,232,238,0.95)');
+  spineGrad.addColorStop(0.5, 'rgba(255,255,255,1)');
+  spineGrad.addColorStop(1, 'rgba(230,232,238,0.95)');
+  ctx.fillStyle = spineGrad;
+  ctx.fillRect(180, 110, 24, 340);
+
+  ctx.strokeStyle = 'rgba(80,85,90,0.7)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 14; i++) {
+    ctx.beginPath();
+    ctx.moveTo(182, 120 + i * 24);
+    ctx.lineTo(202, 120 + i * 24);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(225,228,235,0.85)';
+  ctx.lineWidth = 5.5;
+  for (let i = 0; i < 9; i++) {
+    const y = 145 + i * 26;
+    ctx.beginPath();
+    ctx.arc(192, y, 108 - i * 3, Math.PI * 0.12, Math.PI * 0.88, false);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(235,238,245,0.95)';
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(105, 128); ctx.lineTo(180, 112);
+  ctx.moveTo(279, 128); ctx.lineTo(204, 112);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(70,75,85,0.6)';
+  ctx.beginPath();
+  ctx.ellipse(165, 275, 48, 58, -0.25, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(120,125,135,0.5)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(80, 400);
+  ctx.quadraticCurveTo(192, 370, 304, 400);
+  ctx.stroke();
+
+  for (let i = 0; i < 4500; i++) {
+    const v = Math.random() * 255;
+    ctx.fillStyle = `rgba(${v},${v},${v},${Math.random()*0.045})`;
+    ctx.fillRect(Math.random()*384, Math.random()*500, 1, 1);
+  }
+
+  ctx.fillStyle = 'rgba(180,200,180,0.7)';
+  ctx.font = '11px monospace';
+  ctx.fillText('X-RAY  CHEST PA', 15, 480);
+  ctx.fillText('KVP: 120  MAS: 3.2', 240, 480);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeCTFilmTexture() {
+  const c = document.createElement('canvas');
+  c.width = 420; c.height = 420;
+  const ctx = c.getContext('2d');
+
+  ctx.fillStyle = '#050505';
+  ctx.fillRect(0, 0, 420, 420);
+
+  ctx.fillStyle = '#6a6a6a';
+  ctx.beginPath();
+  ctx.ellipse(210, 210, 180, 165, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#8a8a8a';
+  ctx.beginPath();
+  ctx.ellipse(210, 210, 168, 153, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#4a4a4a';
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.ellipse(210, 210, 172, 157, 0, 0, Math.PI*2);
+  ctx.stroke();
+
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath();
+  ctx.ellipse(140, 190, 55, 78, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(280, 190, 55, 78, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(200,200,200,0.75)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3;
+    ctx.beginPath();
+    ctx.moveTo(140 + Math.cos(a)*8, 190 + Math.sin(a)*10);
+    ctx.lineTo(140 + Math.cos(a)*42, 190 + Math.sin(a)*60);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(280 + Math.cos(a)*8, 190 + Math.sin(a)*10);
+    ctx.lineTo(280 + Math.cos(a)*42, 190 + Math.sin(a)*60);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = '#9a9a9a';
+  ctx.beginPath();
+  ctx.ellipse(210, 230, 52, 62, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#5a5a5a';
+  ctx.beginPath();
+  ctx.ellipse(225, 235, 22, 30, 0.2, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#e8e8e8';
+  ctx.beginPath();
+  ctx.arc(210, 320, 30, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#7a7a7a';
+  ctx.beginPath();
+  ctx.arc(210, 320, 15, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#cccccc';
+  ctx.beginPath();
+  ctx.ellipse(210, 285, 22, 10, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle = '#d8d8d8';
+  for (let i = 0; i < 10; i++) {
+    const a = i / 10 * Math.PI * 2 + 0.3;
+    const r = 148;
+    ctx.beginPath();
+    ctx.arc(210 + Math.cos(a) * r, 210 + Math.sin(a) * r * 0.92, 9, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = '#d0d0d0';
+  ctx.beginPath();
+  ctx.ellipse(210, 95, 18, 12, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  for (let i = 0; i < 5000; i++) {
+    const v = Math.random() * 255;
+    ctx.fillStyle = `rgba(${v},${v},${v},${Math.random()*0.05})`;
+    ctx.fillRect(Math.random()*420, Math.random()*420, 1, 1);
+  }
+
+  ctx.fillStyle = 'rgba(200,220,200,0.8)';
+  ctx.font = '11px monospace';
+  ctx.fillText('CT AXIAL - SLICE 42/120', 12, 405);
+  ctx.fillText('120 KV  200 MAS  WL:40 WW:400', 12, 418);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// ============================================================
+// 8. KHỞI TẠO
+// ============================================================
+const xrayM = createXrayMachine();
+scene.add(xrayM.group);
+
+const ctM = createCTMachine();
+scene.add(ctM.group);
+
+// ============================================================
+// 9. STATE & UI
+// ============================================================
+let currentMode = 'xray';
+let currentStep = 0;
+let stepTime = 0;
+let autoplay = false;
+let internalView = false;
+
+const stepDurations = [2.8, 2.2, 2.6, 3.2, 3.2, 2.6, 2.6, 3.2];
+const stepLabels = [
+  'Chuẩn bị bệnh nhân',
+  'Cấp nguồn cao áp',
+  'Phát electron',
+  'Tạo tia X',
+  'Xuyên qua cơ thể',
+  'Thu nhận tín hiệu',
+  'Xử lý ảnh',
+  'In phim kết quả'
+];
+
+const stepInfo = {
+  xray: [
+    { title: 'Bước 1 — Chuẩn bị bệnh nhân', desc: 'Bệnh nhân nằm lên bàn, kỹ thuật viên căn chỉnh vùng cần chụp nằm đúng giữa chùm tia. Bàn có thể nâng/hạ để căn đúng vị trí giải phẫu.' },
+    { title: 'Bước 2 — Cấp nguồn cao áp', desc: 'Máy phát điện cao áp (40–150 kV) cấp điện cho ống phát tia X. Dòng điện nung nóng dây tóc cathode lên ~2000°C.' },
+    { title: 'Bước 3 — Phát electron', desc: 'Cathode (dây tóc vonfram) bị nung nóng phát ra electron. Hiệu điện thế cao giữa cathode và anode gia tốc các electron này về phía anode với vận tốc rất lớn.' },
+    { title: 'Bước 4 — Tạo tia X', desc: 'Electron đập vào anode vonfram → phát ra tia X theo 2 cơ chế: bức xạ hãm (bremsstrahlung) và phát xạ đặc trưng. Tia X thoát ra ngoài qua cửa sổ berili, sau đó qua collimator để tạo chùm tia hẹp.' },
+    { title: 'Bước 5 — Tia X xuyên qua cơ thể', desc: 'Tia X chiếu qua bệnh nhân. Mô đặc (xương) hấp thụ nhiều tia X → ít tia tới detector → hiện trắng. Mô mềm (phổi, mỡ) hấp thụ ít → nhiều tia tới detector → hiện đen.' },
+    { title: 'Bước 6 — Thu nhận tín hiệu', desc: 'Phía sau bệnh nhân, tấm film hoặc detector số hứng tia X còn lại. Cường độ tia tới detector tỉ lệ nghịch với độ hấp thụ của mô tại mỗi điểm.' },
+    { title: 'Bước 7 — Xử lý ảnh', desc: 'Với X-quang số (DR/CR): tín hiệu được số hóa thành ma trận điểm ảnh, máy tính dựng lại ảnh 2D. Với film truyền thống: film được tráng rửa bằng hóa chất để hiện hình.' },
+    { title: 'Bước 8 — In phim kết quả', desc: 'Hình ảnh được in ra phim X-quang hoặc hiển thị trên màn hình PACS. Bác sĩ chẩn đoán đoán hình ảnh đọc phim để tìm bệnh lý: viêm phổi, gãy xương, lao, u phổi...' }
+  ],
+  ct: [
+    { title: 'Bước 1 — Chuẩn bị bệnh nhân', desc: 'Bệnh nhân nằm ngửa trên bàn CT. Bàn từ từ trượt vào trong khoang gantry (donut). Kỹ thuật viên căn vùng cần chụp vào đúng tâm vòng quay.' },
+    { title: 'Bước 2 — Cấp nguồn & khởi động', desc: 'Hệ thống cao áp và bóng phát tia X hoạt động. Dàn detector và bóng X-quang gắn trên vòng quay (rotor) bắt đầu chuyển động quay bên trong gantry.' },
+    { title: 'Bước 3 — Phát tia X', desc: 'Bóng phát tia X trên rotor phát ra chùm tia X hình quạt (fan beam). Electron từ cathode được gia tốc đập vào anode tạo tia X, chiếu xuyên qua bệnh nhân theo một hướng.' },
+    { title: 'Bước 4 — Bàn trượt vào & bắt đầu quét', desc: 'Bàn bệnh nhân bắt đầu trượt chầm chậm vào trong gantry. Bóng X-quang và dàn detector quay liên tục 360° quanh bệnh nhân (0,3–0,5 giây/vòng). Mỗi vòng thu hàng trăm phép đo ở các góc khác nhau.' },
+    { title: 'Bước 5 — Tia X xuyên qua cơ thể', desc: 'Từ mỗi góc quay, tia X xuyên qua cơ thể và bị hấp thụ khác nhau tùy mô. Detector đối diện ghi lại cường độ tia X còn lại ở mỗi góc. Bàn tiếp tục trượt để quét từng lát cắt.' },
+    { title: 'Bước 6 — Thu nhận dữ liệu', desc: 'Dàn detector (hàng nghìn phần tử) ghi nhận tín hiệu ở mọi góc quay → tập hợp thành "sinogram" — dữ liệu thô để tái tạo ảnh. Bàn di chuyển đều để quét toàn bộ vùng cơ thể.' },
+    { title: 'Bước 7 — Tái tạo ảnh', desc: 'Máy tính dùng thuật toán tái tạo (Filtered Back Projection hoặc lặp — IR) để dựng lại các lát cắt 2D (axial slices). Ghép nhiều lát cắt liên tiếp → dựng ảnh 3D, ảnh MPR.' },
+    { title: 'Bước 8 — In phim / xuất ảnh', desc: 'Các lát cắt được in ra phim hoặc xuất dạng DICOM. Bác sĩ đọc phim để chẩn đoán: u, xuất huyết não, gãy xương, tắc mạch, bệnh phổi...' }
+  ]
+};
+
+const stepsEl = document.getElementById('steps');
+for (let i = 0; i < 8; i++) {
+  const el = document.createElement('div');
+  el.className = 'step-item';
+  el.innerHTML = `<div class="step-num">${i+1}</div><span>${stepLabels[i]}</span>`;
+  el.addEventListener('click', () => setStep(i));
+  stepsEl.appendChild(el);
+}
+
+// ============================================================
+// 10. CAMERA
+// ============================================================
+const camGoalPos = new THREE.Vector3(0, 7, 17);
+const camGoalTarget = new THREE.Vector3(0, 1.6, 0);
+let camAnimating = false;
+
+function focusCamera(mode) {
+  if (mode === 'xray') {
+    camGoalPos.set(-4, 4.5, 9);
+    camGoalTarget.set(-4, 1.7, 0);
+  } else {
+    camGoalPos.set(6, 5.5, 12);
+    camGoalTarget.set(4.5, 1.6, 0);
+  }
+  camAnimating = true;
+}
+
+function resetCamera() {
+  if (currentMode === 'xray') focusCamera('xray');
+  else focusCamera('ct');
+}
+
+// ============================================================
+// 11. ĐIỀU KHIỂN
+// ============================================================
+function setStep(n) {
+  currentStep = Math.max(0, Math.min(7, n));
+  stepTime = 0;
+  updateUI();
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('btn-xray').classList.toggle('active', mode === 'xray');
+  document.getElementById('btn-ct').classList.toggle('active', mode === 'ct');
+  currentStep = 0;
+  stepTime = 0;
+  autoplay = false;
+  updatePlayButton();
+  focusCamera(mode);
+  updateUI();
+}
+
+function togglePlay() {
+  autoplay = !autoplay;
+  if (autoplay && currentStep >= 7) setStep(0);
+  updatePlayButton();
+}
+
+function updatePlayButton() {
+  const btn = document.getElementById('btn-play');
+  btn.textContent = autoplay ? '❚❚ Tạm dừng' : '▶ Tự động';
+  btn.classList.toggle('active', autoplay);
+}
+
+function toggleInternal() {
+  internalView = !internalView;
+  document.getElementById('btn-internal').classList.toggle('active', internalView);
+  document.getElementById('btn-internal').textContent = internalView ? 'Xem vỏ ngoài' : 'Xem cấu tạo trong';
+  xrayCasingMat.opacity = internalView ? 0.13 : 1;
+  ctCasingMat.opacity = internalView ? 0.13 : 1;
+  xrayM.housingEdge.visible = internalView;
+}
+
+function updateUI() {
+  document.querySelectorAll('.step-item').forEach((el, i) => {
+    el.classList.toggle('active', i === currentStep);
+    el.classList.toggle('done', i < currentStep);
+  });
+  const info = stepInfo[currentMode][currentStep];
+  document.getElementById('footer-title').textContent = info.title;
+  document.getElementById('footer-text').textContent = info.desc;
+}
+
+document.getElementById('btn-xray').addEventListener('click', () => setMode('xray'));
+document.getElementById('btn-ct').addEventListener('click', () => setMode('ct'));
+document.getElementById('btn-prev').addEventListener('click', () => setStep(currentStep - 1));
+document.getElementById('btn-next').addEventListener('click', () => setStep(currentStep + 1));
+document.getElementById('btn-play').addEventListener('click', togglePlay);
+document.getElementById('btn-internal').addEventListener('click', toggleInternal);
+document.getElementById('btn-reset').addEventListener('click', resetCamera);
+
+// ============================================================
+// 12. TIỆN ÍCH
+// ============================================================
+function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp01(x) { return Math.max(0, Math.min(1, x)); }
+function smoothstep(a, b, x) { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); }
+function damp(cur, target, lambda, dt) { return lerp(cur, target, 1 - Math.exp(-lambda * dt)); }
+
+// ============================================================
+// 13. ANIMATION CỦA MÁY X-QUANG
+// ============================================================
+let elapsed = 0;
+
+function updateXrayMachine(dt) {
+  const m = xrayM;
+  const t = stepTime;
+
+  const cathodeOn = currentStep >= 2;
+  const cathodeIntensity = cathodeOn ? (0.9 + Math.sin(elapsed * 10) * 0.2) : 0;
+  m.cathode.material.emissive.setHex(cathodeOn ? 0xff2200 : 0x000000);
+  m.cathode.material.emissiveIntensity = cathodeOn ? cathodeIntensity * 1.5 : 0;
+  m.filament.material.emissive.setHex(cathodeOn ? 0xff5500 : 0x000000);
+  m.filament.material.emissiveIntensity = cathodeOn ? cathodeIntensity * 3 : 0;
+
+  const eOn = currentStep >= 2;
+  const eOpacity = eOn ? clamp01((t - 0.2) * 2) : 0;
+  m.eBeam.material.opacity = eOpacity * 0.85;
+  m.ePartMat.opacity = eOpacity * 0.95;
+
+  if (eOn) {
+    const pos = m.ePartPos;
+    for (let i = 0; i < pos.length / 3; i++) {
+      pos[i*3+1] -= dt * 2.2;
+      if (pos[i*3+1] < 2.55) pos[i*3+1] = 2.88;
+    }
+    m.eParticles.geometry.attributes.position.needsUpdate = true;
+  }
+
+  const anodeOn = currentStep >= 3;
+  m.anode.material.emissive.setHex(anodeOn ? 0xffcc55 : 0x000000);
+  m.anode.material.emissiveIntensity = anodeOn ? (1.2 + Math.sin(elapsed * 18) * 0.4) : 0;
+
+  const xOn = currentStep >= 3;
+  const pulse = 0.85 + Math.sin(elapsed * 7) * 0.15;
+  m.xrayCone.material.opacity = xOn ? 0.18 * pulse : 0;
+  m.xrayCore.material.opacity = xOn ? 0.35 * pulse : 0;
+  m.xrayLight.intensity = xOn ? 2.5 * pulse : 0;
+
+  const thruOn = currentStep >= 4;
+  m.beamThru.material.opacity = thruOn ? 0.55 * pulse : 0;
+
+  const filmOn = currentStep >= 7;
+  const filmScale = filmOn ? smoothstep(0, 1, clamp01(t * 1.6)) : 0;
+  m.film.scale.setScalar(Math.max(0.001, filmScale));
+  m.filmFrame.scale.setScalar(Math.max(0.001, filmScale));
+}
+
+// ============================================================
+// 14. ANIMATION CỦA MÁY CT — PHẦN ĐÃ SỬA
+// ============================================================
+function updateCTMachine(dt) {
+  const m = ctM;
+  const t = stepTime;
+
+  // ---- Đèn LED ----
+  const powered = currentStep >= 1;
+  m.led.material.color.setHex(powered ? (currentStep >= 2 ? 0x10b981 : 0xf59e0b) : 0x374151);
+
+  // ==========================================
+  // BÀN TRƯỢT — DI CHUYỂN QUA GANTRY
+  // ==========================================
+  // Quỹ đạo: 3.5 (ngoài) → 2.0 (chờ) → -2.5 (đã qua hẳn)
+  // Tổng quãng đường ~6 đơn vị, đủ để bệnh nhân đi xuyên qua
+  let slideZ;
+  if (currentStep === 0) {
+    // Bước 0: bàn tiến từ ngoài vào vị trí chờ (nhưng chưa vào gantry)
+    const p = smoothstep(0, 1, clamp01(t / stepDurations[0]));
+    slideZ = lerp(3.5, 2.0, p);
+  } else if (currentStep <= 3) {
+    // Bước 1-3: giữ nguyên vị trí chờ
+    slideZ = 2.0;
+  } else if (currentStep <= 6) {
+    // Bước 4-6: TRƯỢT QUA GANTRY từ từ
+    const stepIdx = currentStep - 4;                  // 0, 1, 2
+    const stepFrac = clamp01(t / stepDurations[currentStep]);
+    const scanProgress = (stepIdx + stepFrac) / 3;    // 0 → 1
+    slideZ = lerp(2.0, -2.5, scanProgress);
+  } else {
+    // Bước 7: đã qua hẳn bên kia
+    slideZ = -2.5;
+  }
+  m.slideGroup.position.z = damp(m.slideGroup.position.z, slideZ, 5, dt);
+
+  // ---- Rotor quay ----
+  const scanning = currentStep >= 2 && currentStep <= 6;
+  const targetSpeed = scanning ? (currentStep === 2 ? 1.2 : 5.5) : 0;
+  m._rotorSpeed = damp(m._rotorSpeed || 0, targetSpeed, 3, dt);
+  m.rotor.rotation.z += m._rotorSpeed * dt;
+
+  // ---- Cathode / Anode ----
+  const cathodeOn = currentStep >= 2;
+  m.ctCathode.material.emissive.setHex(cathodeOn ? 0xff2200 : 0x000000);
+  m.ctCathode.material.emissiveIntensity = cathodeOn ? 2.2 : 0;
+  m.ctAnode.material.emissive.setHex(currentStep >= 3 ? 0xffcc55 : 0x000000);
+  m.ctAnode.material.emissiveIntensity = currentStep >= 3 ? 1.5 : 0;
+
+  // ---- Chùm tia X quạt ----
+  const beamOn = currentStep >= 3;
+  const pulse = 0.85 + Math.sin(elapsed * 9) * 0.15;
+  m.ctBeam.material.opacity = beamOn ? 0.22 * pulse : 0;
+  m.ctBeamCore.material.opacity = beamOn ? 0.35 * pulse : 0;
+  m.ctLight.intensity = beamOn ? 3.0 * pulse : 0;
+
+  // ---- Vòng slice luôn cố định tại tâm gantry ----
+  const sliceOn = currentStep >= 4 && currentStep <= 7;
+  m.sliceRing.material.opacity = sliceOn ? 0.8 * (0.7 + Math.sin(elapsed * 5) * 0.3) : 0;
+
+  // ---- Detector ----
+  const detOn = currentStep >= 5;
+  m.detector.children.forEach(d => {
+    d.material.emissive.setHex(detOn ? 0x2266aa : 0x000000);
+    d.material.emissiveIntensity = detOn ? 0.8 : 0;
+  });
+
+  // ---- Film ----
+  const filmOn = currentStep >= 7;
+  const filmScale = filmOn ? smoothstep(0, 1, clamp01(t * 1.6)) : 0;
+  m.film.scale.setScalar(Math.max(0.001, filmScale));
+  m.filmFrame.scale.setScalar(Math.max(0.001, filmScale));
+}
+
+// ============================================================
+// 15. VÒNG LẶP CHÍNH
+// ============================================================
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const dt = Math.min(clock.getDelta(), 0.05);
+  elapsed += dt;
+
+  if (autoplay) {
+    stepTime += dt;
+    if (stepTime > stepDurations[currentStep]) {
+      if (currentStep < 7) setStep(currentStep + 1);
+      else { autoplay = false; updatePlayButton(); }
+    }
+  } else {
+    stepTime += dt;
+  }
+  if (stepTime > 20) stepTime = 20;
+
+  if (currentMode === 'xray') updateXrayMachine(dt);
+  else updateCTMachine(dt);
+
+  if (camAnimating) {
+    camera.position.lerp(camGoalPos, 1 - Math.exp(-4 * dt));
+    controls.target.lerp(camGoalTarget, 1 - Math.exp(-4 * dt));
+    if (camera.position.distanceTo(camGoalPos) < 0.05) camAnimating = false;
+  }
+
+  controls.update();
+
+  const breathe = 1 + Math.sin(elapsed * 0.8) * 0.03;
+  dirLight.intensity = 1.4 * breathe;
+
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+updateUI();
+focusCamera('xray');
+animate();
+</script>
+</body>
+</html>
